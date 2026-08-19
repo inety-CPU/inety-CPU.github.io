@@ -348,6 +348,32 @@
     }
     .msg-actions button:hover { background: var(--surface-2); color: var(--text); }
 
+    .thinking {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-3);
+      font-size: 13px;
+      padding: 4px 0;
+    }
+    .spinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .model-tag {
+      margin-top: 8px;
+      padding-top: 6px;
+      border-top: 1px dashed var(--border);
+      font-size: 11px;
+      color: var(--text-3);
+    }
+
     .composer {
       height: var(--composer-h);
       border-top: 1px solid var(--border);
@@ -806,8 +832,8 @@
     deepseek: {
       name: 'DeepSeek',
       baseUrl: 'https://api.deepseek.com/v1',
-      defaultModel: 'deepseek-chat',
-      models: ['deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-flash', 'deepseek-v4-pro']
+      defaultModel: 'deepseek-v4-flash',
+      models: ['deepseek-v4-flash', 'deepseek-v4-pro']
     },
     kimi: {
       name: 'Kimi',
@@ -913,6 +939,15 @@
     };
   }
 
+  const MODEL_ALIAS_MAP = {
+    'deepseek-chat': 'deepseek-v4-flash',
+    'deepseek-coder': 'deepseek-v4-flash',
+    'deepseek-reasoner': 'deepseek-v4-pro'
+  };
+  function migrateModel(model) {
+    return MODEL_ALIAS_MAP[model] || model;
+  }
+
   function mergeConfig(parsed) {
     const def = defaultConfig();
     const merged = {
@@ -928,6 +963,9 @@
         ...saved,
         models: mergeModels(def.providers[key].models, saved.models)
       };
+      const p = merged.providers[key];
+      p.defaultModel = migrateModel(p.defaultModel);
+      p.models = [...new Set(p.models.map(migrateModel))];
     }
     if (parsed.providers?.custom) {
       merged.providers.custom = {
@@ -1043,19 +1081,29 @@
       div.className = `message ${msg.role}`;
       div.dataset.index = idx;
       const avatar = msg.role === 'user' ? '你' : 'AI';
-      const html = renderMarkdown(msg.content);
+      const isPending = msg.role === 'assistant' && msg.pending;
+      const html = isPending
+        ? `<div class="thinking"><span class="spinner"></span>正在思考中…</div>`
+        : renderMarkdown(msg.content);
+      const actionsHtml = isPending ? '' : `
+          <div class="msg-actions">
+            <button data-action="copy" title="复制内容">复制</button>
+            <button data-action="edit" title="编辑">编辑</button>
+          </div>`;
+      const modelTag = (!isPending && msg.role === 'assistant' && msg.model)
+        ? `<div class="model-tag">实际模型：${escapeHtml(msg.model)}</div>` : '';
       div.innerHTML = `
         <div class="avatar">${avatar}</div>
         <div class="bubble">
           ${html}
-          <div class="msg-actions">
-            <button data-action="copy" title="复制内容">复制</button>
-            <button data-action="edit" title="编辑">编辑</button>
-          </div>
+          ${modelTag}
+          ${actionsHtml}
         </div>
       `;
-      div.querySelector('[data-action="copy"]').addEventListener('click', () => copyText(msg.content));
-      div.querySelector('[data-action="edit"]').addEventListener('click', () => editMessage(idx));
+      if (!isPending) {
+        div.querySelector('[data-action="copy"]').addEventListener('click', () => copyText(msg.content));
+        div.querySelector('[data-action="edit"]').addEventListener('click', () => editMessage(idx));
+      }
       els.messages.appendChild(div);
     });
     attachCodeClicks();
@@ -1341,7 +1389,7 @@
 
     isGenerating = true;
     els.btnSend.disabled = true;
-    const assistantMsg = { role: 'assistant', content: '' };
+    const assistantMsg = { role: 'assistant', content: '', pending: true };
     session.messages.push(assistantMsg);
     renderMessages();
 
@@ -1397,6 +1445,7 @@
       } else {
         const data = await resp.json();
         assistantMsg.content = data.choices?.[0]?.message?.content || '';
+        assistantMsg.model = data.model || assistantMsg.model;
         finishInference(session);
       }
     } catch (err) {
@@ -1429,8 +1478,13 @@
         if (data === '[DONE]') continue;
         try {
           const json = JSON.parse(data);
+          if (json.model && !assistantMsg.model) assistantMsg.model = json.model;
           const delta = json.choices?.[0]?.delta?.content || '';
           if (delta) {
+            if (assistantMsg.pending) {
+              assistantMsg.pending = false;
+              renderMessages();
+            }
             assistantMsg.content += delta;
             updateLastMessage(session);
           }
@@ -1443,8 +1497,10 @@
   function updateLastMessage(session) {
     const bubble = els.messages.querySelector('.message.assistant:last-child .bubble');
     if (bubble) {
-      const html = renderMarkdown(session.messages[session.messages.length - 1].content);
-      bubble.innerHTML = html + `
+      const lastMsg = session.messages[session.messages.length - 1];
+      const html = renderMarkdown(lastMsg.content);
+      const modelTag = lastMsg.model ? `<div class="model-tag">实际模型：${escapeHtml(lastMsg.model)}</div>` : '';
+      bubble.innerHTML = html + modelTag + `
         <div class="msg-actions">
           <button data-action="copy">复制</button>
           <button data-action="edit">编辑</button>
