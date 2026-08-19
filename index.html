@@ -872,6 +872,8 @@
   let currentSessionId = sessions[0]?.id || null;
   let isGenerating = false;
   let abortController = null;
+  let inferenceTimer = null;
+  let inferenceTimedOut = false;
   let plugins = [];
 
   /* ===================== DOM 引用 ===================== */
@@ -1423,6 +1425,11 @@
     }
 
     abortController = new AbortController();
+    inferenceTimedOut = false;
+    inferenceTimer = setTimeout(() => {
+      inferenceTimedOut = true;
+      if (abortController) abortController.abort();
+    }, 120000);
 
     try {
       const resp = await fetch(`${baseUrl}/chat/completions`, {
@@ -1449,7 +1456,9 @@
         finishInference(session);
       }
     } catch (err) {
-      if (err.name === 'AbortError') {
+      if (inferenceTimedOut) {
+        assistantMsg.content = '请求超时：120 秒内未收到任何响应，可能是网络问题、API Key 无效或模型当前繁忙，请稍后重试。';
+      } else if (err.name === 'AbortError') {
         assistantMsg.content = assistantMsg.content || '（已取消）';
       } else if (err.message.includes('401')) {
         assistantMsg.content = `请求出错：API Key 无效或已过期（HTTP 401）。请检查「${config.providers[config.providerId].name}」的 API Key 是否正确，注意不同 Provider 的 Key 不能混用。`;
@@ -1516,6 +1525,9 @@
   }
 
   function finishInference(session) {
+    if (inferenceTimer) { clearTimeout(inferenceTimer); inferenceTimer = null; }
+    const last = session.messages[session.messages.length - 1];
+    if (last && last.role === 'assistant') last.pending = false;
     session.updatedAt = Date.now();
     saveSessions();
     isGenerating = false;
