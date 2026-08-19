@@ -525,6 +525,24 @@
     .field textarea { resize: vertical; }
 
     .key-row { display: flex; gap: 8px; }
+
+    /* Plugin manager */
+    .plugin-install { display: flex; gap: 8px; margin-bottom: 10px; }
+    .plugin-install input { flex: 1; }
+    .plugin-list { display: flex; flex-direction: column; gap: 8px; }
+    .plugin-empty { font-size: 12px; color: var(--text-2); padding: 6px 0; }
+    .plugin-item {
+      display: flex; align-items: center; gap: 10px;
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px 10px; background: var(--surface-2);
+    }
+    .plugin-item input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
+    .plugin-meta { flex: 1; min-width: 0; }
+    .plugin-name { font-size: 13px; color: var(--text); font-weight: 500; word-break: break-all; }
+    .plugin-status { font-size: 11px; color: var(--text-2); }
+    .plugin-status.on { color: #1a7f37; }
+    .plugin-status.off { color: #b35900; }
+    .plugin-uninstall { flex-shrink: 0; padding: 3px 8px; font-size: 12px; }
     .key-row input { flex: 1; }
 
     .btn-ghost {
@@ -791,8 +809,13 @@
     </div>
 
     <div class="field">
-      <label>插件（可选）</label>
-      <div class="hint">通过页面 URL 参数或控制台注册插件。详见 README。</div>
+      <label>插件管理</label>
+      <div class="plugin-install">
+        <input type="text" id="pluginUrl" placeholder="https://.../my-plugin.js" />
+        <button class="btn-ghost" id="btnInstallPlugin">安装</button>
+      </div>
+      <div class="hint">粘贴插件 .js 地址一键安装；也可在 URL 后加 <code>?plugin=地址</code> 自动加载。仅安装可信来源。</div>
+      <div class="plugin-list" id="pluginList"></div>
     </div>
 
     <div class="privacy-note">
@@ -964,7 +987,8 @@
 
   const STORAGE_KEYS = {
     config: 'agent_console_config',
-    sessions: 'agent_console_sessions'
+    sessions: 'agent_console_sessions',
+    pluginState: 'agent_console_plugin_state'
   };
 
   /* ===================== 状态 ===================== */
@@ -976,6 +1000,22 @@
   let inferenceTimer = null;
   let inferenceTimedOut = false;
   let plugins = [];
+  let pluginState = loadPluginState(); // { [name]: true|false }
+
+  function loadPluginState() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.pluginState);
+      if (raw) return JSON.parse(raw) || {};
+    } catch (e) { console.error('loadPluginState', e); }
+    return {};
+  }
+  function savePluginState() {
+    localStorage.setItem(STORAGE_KEYS.pluginState, JSON.stringify(pluginState));
+  }
+  function isPluginEnabled(name) {
+    // 默认启用，除非显式设为 false
+    return pluginState[name] !== false;
+  }
 
   /* ===================== DOM 引用 ===================== */
   const els = {
@@ -1014,6 +1054,9 @@
     btnResetHistory: document.getElementById('btnResetHistory'),
     btnClearAll: document.getElementById('btnClearAll'),
     btnDone: document.getElementById('btnDone'),
+    pluginList: document.getElementById('pluginList'),
+    pluginUrl: document.getElementById('pluginUrl'),
+    btnInstallPlugin: document.getElementById('btnInstallPlugin'),
     codeModalOverlay: document.getElementById('codeModalOverlay'),
     codeModalTitle: document.getElementById('codeModalTitle'),
     codeModalBody: document.getElementById('codeModalBody'),
@@ -1371,6 +1414,7 @@
     els.panelOverlay.classList.add('open');
     els.settingsPanel.classList.add('open');
     loadPanelValues();
+    renderPluginList();
   }
 
   function closePanel() {
@@ -1525,6 +1569,7 @@
     };
 
     for (const plugin of plugins) {
+      if (!isPluginEnabled(plugin.name)) continue; // 已禁用的插件跳过
       if (typeof plugin.onBeforeSend === 'function') {
         plugin.onBeforeSend(payload, config);
       }
@@ -1657,9 +1702,105 @@
       console.warn('[AgentConsole] 插件必须包含 name');
       return;
     }
+    // 避免重复注册同名插件
+    const existing = plugins.find(p => p.name === plugin.name);
+    if (existing) {
+      console.warn(`[AgentConsole] 插件已存在，跳过重复注册：${plugin.name}`);
+      return;
+    }
     plugins.push(plugin);
-    if (typeof plugin.onRegister === 'function') plugin.onRegister({ config, sessions, sendMessage });
-    console.log(`[AgentConsole] 插件已注册：${plugin.name}`);
+    // 新插件默认启用
+    if (!(plugin.name in pluginState)) {
+      pluginState[plugin.name] = true;
+      savePluginState();
+    }
+    if (typeof plugin.onRegister === 'function') {
+      plugin.onRegister({ config, sessions, sendMessage });
+    }
+    if (isPluginEnabled(plugin.name) && typeof plugin.onEnable === 'function') {
+      plugin.onEnable();
+    }
+    console.log(`[AgentConsole] 插件已注册：${plugin.name}（${isPluginEnabled(plugin.name) ? '启用' : '禁用'}）`);
+    renderPluginList();
+  }
+
+  function setPluginEnabled(name, enabled) {
+    pluginState[name] = !!enabled;
+    savePluginState();
+    const plugin = plugins.find(p => p.name === name);
+    if (plugin) {
+      if (enabled && typeof plugin.onEnable === 'function') plugin.onEnable();
+      if (!enabled && typeof plugin.onDisable === 'function') plugin.onDisable();
+    }
+    renderPluginList();
+  }
+
+  function uninstallPlugin(name) {
+    plugins = plugins.filter(p => p.name !== name);
+    delete pluginState[name];
+    savePluginState();
+    console.log(`[AgentConsole] 插件已卸载：${name}`);
+    renderPluginList();
+  }
+
+  function installPluginFromUrl(url) {
+    if (!url) return;
+    const script = document.createElement('script');
+    script.src = url;
+    script.onload = () => {
+      // 脚本内部应自行调用 AgentConsole.registerPlugin，注册成功后会自动刷新列表
+      showToast('插件已加载，可在下方列表中启用/禁用');
+      renderPluginList();
+    };
+    script.onerror = () => showToast('插件加载失败，请检查地址');
+    document.body.appendChild(script);
+  }
+
+  function renderPluginList() {
+    const list = els.pluginList;
+    if (!list) return;
+    list.innerHTML = '';
+    if (plugins.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'plugin-empty';
+      empty.textContent = '暂无插件。粘贴上方 .js 地址安装，或访问带 ?plugin= 的链接。';
+      list.appendChild(empty);
+      return;
+    }
+    for (const plugin of plugins) {
+      const enabled = isPluginEnabled(plugin.name);
+      const item = document.createElement('div');
+      item.className = 'plugin-item';
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = enabled;
+      cb.title = '启用/禁用';
+      cb.addEventListener('change', () => setPluginEnabled(plugin.name, cb.checked));
+
+      const meta = document.createElement('div');
+      meta.className = 'plugin-meta';
+      const nameEl = document.createElement('div');
+      nameEl.className = 'plugin-name';
+      nameEl.textContent = plugin.name;
+      const statusEl = document.createElement('div');
+      statusEl.className = 'plugin-status ' + (enabled ? 'on' : 'off');
+      statusEl.textContent = enabled ? '已启用' : '已禁用';
+      meta.appendChild(nameEl);
+      meta.appendChild(statusEl);
+
+      const del = document.createElement('button');
+      del.className = 'btn-ghost danger plugin-uninstall';
+      del.textContent = '卸载';
+      del.addEventListener('click', () => {
+        if (confirm(`确定卸载插件「${plugin.name}」？`)) uninstallPlugin(plugin.name);
+      });
+
+      item.appendChild(cb);
+      item.appendChild(meta);
+      item.appendChild(del);
+      list.appendChild(item);
+    }
   }
 
   window.AgentConsole = {
@@ -1667,7 +1808,10 @@
     config,
     sessions,
     registerPlugin,
-    getPlugins: () => plugins,
+    getPlugins: () => plugins.map(p => ({ name: p.name, enabled: isPluginEnabled(p.name) })),
+    setPluginEnabled,
+    uninstallPlugin,
+    installPluginFromUrl,
     sendMessage,
     createSession,
     getCurrentSession,
@@ -1716,6 +1860,16 @@
     });
 
     els.btnSaveProvider.addEventListener('click', saveCurrentProviderConfig);
+
+    els.btnInstallPlugin.addEventListener('click', () => {
+      const url = els.pluginUrl.value.trim();
+      if (!url) { showToast('请输入插件 .js 地址'); return; }
+      installPluginFromUrl(url);
+      els.pluginUrl.value = '';
+    });
+    els.pluginUrl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') els.btnInstallPlugin.click();
+    });
 
     ['temperature', 'maxTokens', 'topP'].forEach(id => {
       const input = els[id];
