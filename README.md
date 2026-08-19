@@ -171,6 +171,7 @@ agent-console-frontend/
 ├── LICENSE             # MIT 协议
 ├── plugins/            # 插件示例与模板
 │   ├── example-plugin.js  # 真实可用示例（注入系统提示）
+│   ├── chat-background.js # 半透明图片聊天背景（文件/链接 + 透明度调节）
 │   └── template.js        # 空白插件模板
 └── .github/workflows/
     └── pages.yml       # GitHub Pages 自动部署

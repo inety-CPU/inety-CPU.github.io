@@ -991,6 +991,15 @@
     pluginState: 'agent_console_plugin_state'
   };
 
+  const MODEL_ALIAS_MAP = {
+    'deepseek-chat': 'deepseek-v4-flash',
+    'deepseek-coder': 'deepseek-v4-flash',
+    'deepseek-reasoner': 'deepseek-v4-pro'
+  };
+  function migrateModel(model) {
+    return MODEL_ALIAS_MAP[model] || model;
+  }
+
   /* ===================== 状态 ===================== */
   let config = loadConfig();
   let sessions = loadSessions();
@@ -1085,15 +1094,6 @@
       systemPrompt: DEFAULT_SYSTEM_PROMPT,
       params: { temperature: 0.7, max_tokens: 2048, top_p: 1 }
     };
-  }
-
-  const MODEL_ALIAS_MAP = {
-    'deepseek-chat': 'deepseek-v4-flash',
-    'deepseek-coder': 'deepseek-v4-flash',
-    'deepseek-reasoner': 'deepseek-v4-pro'
-  };
-  function migrateModel(model) {
-    return MODEL_ALIAS_MAP[model] || model;
   }
 
   function mergeConfig(parsed) {
