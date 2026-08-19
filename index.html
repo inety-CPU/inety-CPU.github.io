@@ -798,9 +798,10 @@
       </div>
       <div class="param-row">
         <span>Max Tokens</span>
-        <input type="range" id="maxTokens" min="256" max="8192" step="256" value="2048" />
-        <span class="param-val" id="maxTokensVal">2048</span>
+        <input type="range" id="maxTokens" min="256" max="200000" step="1024" value="4096" />
+        <span class="param-val" id="maxTokensVal">4096</span>
       </div>
+      <div class="hint" style="margin-top:-4px;">回复长度上限（最高 200000，可自由调节）。注意：各 Provider / 模型单次输出有硬上限（常见 8K–32K），若拉太高报 400（超出该模型上限），往回拉低即可。</div>
       <div class="param-row">
         <span>Top P</span>
         <input type="range" id="topP" min="0" max="1" step="0.05" value="1" />
@@ -814,7 +815,7 @@
         <input type="text" id="pluginUrl" placeholder="https://.../my-plugin.js" />
         <button class="btn-ghost" id="btnInstallPlugin">安装</button>
       </div>
-      <div class="hint">粘贴插件 .js 地址一键安装；也可在 URL 后加 <code>?plugin=地址</code> 自动加载。仅安装可信来源。</div>
+      <div class="hint">已内置「半透明聊天背景」等插件，直接在下方列表<strong>勾选</strong>即可启用，无需安装。高级用户仍可粘贴外部 .js 地址安装自定义插件（仅安装可信来源）。</div>
       <div class="plugin-list" id="pluginList"></div>
     </div>
 
@@ -1092,7 +1093,7 @@
       providerId: 'deepseek',
       providers: structuredClone(DEFAULT_PROVIDERS),
       systemPrompt: DEFAULT_SYSTEM_PROMPT,
-      params: { temperature: 0.7, max_tokens: 2048, top_p: 1 }
+      params: { temperature: 0.7, max_tokens: 4096, top_p: 1 }
     };
   }
 
@@ -1697,7 +1698,7 @@
   }
 
   /* ===================== 插件系统 ===================== */
-  function registerPlugin(plugin) {
+  function registerPlugin(plugin, defaultEnabled) {
     if (!plugin || !plugin.name) {
       console.warn('[AgentConsole] 插件必须包含 name');
       return;
@@ -1709,9 +1710,9 @@
       return;
     }
     plugins.push(plugin);
-    // 新插件默认启用
+    // 新插件默认启用（内置插件可传 false 让其默认关闭）
     if (!(plugin.name in pluginState)) {
-      pluginState[plugin.name] = true;
+      pluginState[plugin.name] = (defaultEnabled === undefined) ? true : !!defaultEnabled;
       savePluginState();
     }
     if (typeof plugin.onRegister === 'function') {
@@ -1763,7 +1764,7 @@
     if (plugins.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'plugin-empty';
-      empty.textContent = '暂无插件。粘贴上方 .js 地址安装，或访问带 ?plugin= 的链接。';
+      empty.textContent = '暂无插件。可粘贴上方 .js 地址安装自定义插件（内置插件已在列表中）。';
       list.appendChild(empty);
       return;
     }
@@ -1932,6 +1933,138 @@
     els.input.style.height = Math.min(els.input.scrollHeight, 160) + 'px';
   }
 
+  /* ===================== 内置插件 ===================== */
+  // 常用插件直接内置进页面：用户无需上传/填写任何地址，
+  // 在「设置 → 插件管理」列表里勾选即可启用。
+  function registerBuiltins() {
+    // —— 内置插件：半透明聊天背景 ——
+    const chatBgPlugin = (function () {
+      const PLUGIN_NAME = '半透明聊天背景';
+      const STORAGE_KEY = 'ac_plugin_chatbg';
+      let state = { src: '', opacity: 0.25 };
+
+      function loadState() {
+        try { const raw = localStorage.getItem(STORAGE_KEY); if (raw) state = Object.assign(state, JSON.parse(raw)); } catch (e) {}
+      }
+      function saveState() {
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
+      }
+      function getLayer() {
+        let el = document.getElementById('acChatBgLayer');
+        if (!el) {
+          el = document.createElement('div');
+          el.id = 'acChatBgLayer';
+          el.className = 'ac-chatbg-layer';
+          const main = document.querySelector('.main');
+          if (main) main.insertBefore(el, main.firstChild);
+        }
+        return el;
+      }
+      function applyBackground() {
+        if (!isPluginEnabled(PLUGIN_NAME)) return;
+        const el = getLayer();
+        if (!el) return;
+        if (!state.src) { el.style.display = 'none'; return; }
+        el.style.display = 'block';
+        el.style.backgroundImage = 'url("' + state.src + '")';
+        el.style.opacity = String(state.opacity);
+      }
+      function injectStyle() {
+        if (document.getElementById('acChatBgStyle')) return;
+        const style = document.createElement('style');
+        style.id = 'acChatBgStyle';
+        style.textContent =
+          '.ac-chatbg-layer{position:absolute!important;inset:0!important;z-index:0!important;' +
+          'background-repeat:no-repeat!important;background-position:center center!important;' +
+          'background-size:cover!important;pointer-events:none!important;opacity:0.25;}' +
+          '.main{background:transparent!important;position:relative!important;}' +
+          '.topbar,.messages,.composer{background:transparent!important;position:relative!important;z-index:1!important;}' +
+          '#acBgCard{border:1px solid var(--border,#e3e8ef);border-radius:10px;padding:12px;margin:14px 0;background:var(--surface-2,#f6f8fa);}' +
+          '#acBgCard .ac-bg-label{display:block;font-size:12px;color:var(--text-2,#5b6573);margin:10px 0 4px;}' +
+          '#acBgCard input[type=text],#acBgCard input[type=file]{width:100%;box-sizing:border-box;}' +
+          '#acBgCard .ac-bg-row{display:flex;gap:8px;}' +
+          '#acBgCard .ac-bg-row input{flex:1;min-width:0;}' +
+          '#acBgCard .ac-bg-btns{display:flex;gap:8px;margin-top:10px;}' +
+          '#acBgCard .ac-bg-hint{font-size:11px;color:var(--text-2,#5b6573);margin-top:8px;}';
+        document.head.appendChild(style);
+      }
+      function buildUI() {
+        const body = document.querySelector('.panel-body');
+        if (!body || document.getElementById('acBgCard')) return;
+        const card = document.createElement('div');
+        card.id = 'acBgCard';
+        card.innerHTML =
+          '<div class="ac-bg-label" style="margin-top:0;font-weight:600;color:var(--text,#1f2329);">聊天背景（半透明）</div>' +
+          '<div class="ac-bg-hint">选择本地图片或粘贴图片链接，作为聊天区半透明背景（可调节透明度）。</div>' +
+          '<label class="ac-bg-label">① 选择本地图片</label>' +
+          '<input type="file" id="acBgFile" accept="image/*" />' +
+          '<label class="ac-bg-label">② 或粘贴图片链接</label>' +
+          '<div class="ac-bg-row"><input type="text" id="acBgUrl" placeholder="https://.../bg.png" /><button class="btn-ghost" id="acBgUrlBtn">应用</button></div>' +
+          '<label class="ac-bg-label">透明度：<span id="acBgOpVal">' + state.opacity + '</span></label>' +
+          '<input type="range" id="acBgOp" min="0.05" max="0.8" step="0.05" value="' + state.opacity + '" />' +
+          '<div class="ac-bg-btns"><button class="btn-ghost" id="acBgClear">清除背景</button></div>' +
+          '<div class="ac-bg-hint" id="acBgHint"></div>';
+        body.appendChild(card);
+
+        const fileInput = card.querySelector('#acBgFile');
+        const urlInput = card.querySelector('#acBgUrl');
+        const urlBtn = card.querySelector('#acBgUrlBtn');
+        const opInput = card.querySelector('#acBgOp');
+        const opVal = card.querySelector('#acBgOpVal');
+        const clearBtn = card.querySelector('#acBgClear');
+        const hint = card.querySelector('#acBgHint');
+        function updateHint() { hint.textContent = state.src ? '已设置背景，刷新后自动恢复。' : '尚未设置背景。'; }
+
+        fileInput.addEventListener('change', () => {
+          const f = fileInput.files && fileInput.files[0];
+          if (!f) return;
+          const reader = new FileReader();
+          reader.onload = () => { state.src = reader.result; saveState(); applyBackground(); updateHint(); };
+          reader.readAsDataURL(f);
+        });
+        function applyUrl() {
+          const u = urlInput.value.trim();
+          if (!u) return;
+          state.src = u; saveState(); applyBackground(); updateHint();
+        }
+        urlBtn.addEventListener('click', applyUrl);
+        urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') applyUrl(); });
+        opInput.addEventListener('input', () => {
+          state.opacity = parseFloat(opInput.value);
+          opVal.textContent = state.opacity;
+          saveState(); applyBackground();
+        });
+        clearBtn.addEventListener('click', () => { state.src = ''; saveState(); applyBackground(); updateHint(); });
+        updateHint();
+      }
+      function whenReady(selector, cb, tries) {
+        tries = tries || 0;
+        if (document.querySelector(selector)) return cb();
+        if (tries > 50) return;
+        setTimeout(() => whenReady(selector, cb, tries + 1), 50);
+      }
+      return {
+        name: PLUGIN_NAME,
+        onRegister() { loadState(); injectStyle(); whenReady('.main', applyBackground); },
+        onEnable() {
+          injectStyle();
+          if (!document.getElementById('acBgCard')) buildUI();
+          const card = document.getElementById('acBgCard');
+          if (card) card.style.display = '';
+          applyBackground();
+          showToast('已开启聊天背景：在「设置」底部选择图片或填链接');
+        },
+        onDisable() {
+          const el = document.getElementById('acChatBgLayer');
+          if (el) el.style.display = 'none';
+          const card = document.getElementById('acBgCard');
+          if (card) card.style.display = 'none';
+        }
+      };
+    })();
+    registerPlugin(chatBgPlugin, false);
+  }
+
   /* ===================== 初始化 ===================== */
   function init() {
     populateProviderSelects();
@@ -1939,6 +2072,7 @@
     renderMessages();
     bindEvents();
     autoResizeInput();
+    registerBuiltins();
     console.log('[AgentConsole] 已初始化。通过 AgentConsole.registerPlugin(plugin) 注册插件。');
   }
 
