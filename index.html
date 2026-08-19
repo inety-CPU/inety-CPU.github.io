@@ -371,8 +371,11 @@
       padding-top: 6px;
       border-top: 1px dashed var(--border);
       font-size: 11px;
+      line-height: 1.6;
       color: var(--text-3);
+      word-break: break-word;
     }
+    .model-tag .cost-flag { color: var(--accent-2); }
 
     .composer {
       height: var(--composer-h);
@@ -686,6 +689,8 @@
       <div class="meta-row"><span class="meta-key">消息</span><span class="meta-val" id="msgCount">0</span></div>
       <div class="meta-row"><span class="meta-key">Provider</span><span class="meta-val" id="curProvider">—</span></div>
       <div class="meta-row"><span class="meta-key">模型</span><span class="meta-val" id="curModel">—</span></div>
+      <div class="meta-row"><span class="meta-key">本会话 Token</span><span class="meta-val" id="sessionTokens">0</span></div>
+      <div class="meta-row"><span class="meta-key">本会话费用</span><span class="meta-val" id="sessionCost">¥0.0000</span></div>
     </div>
 
     <div class="sidebar-bottom">
@@ -833,7 +838,8 @@
       name: 'DeepSeek',
       baseUrl: 'https://api.deepseek.com/v1',
       defaultModel: 'deepseek-v4-flash',
-      models: ['deepseek-v4-flash', 'deepseek-v4-pro']
+      models: ['deepseek-v4-flash', 'deepseek-v4-pro'],
+      usageStream: true
     },
     kimi: {
       name: 'Kimi',
@@ -841,25 +847,120 @@
       defaultModel: 'kimi-k3',
       models: ['kimi-k3', 'kimi-k2.7-code', 'kimi-k2.7-code-highspeed', 'kimi-k2.6', 'kimi-k2.5', 'moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
       temperature: 1,
-      top_p: 0.95
+      top_p: 0.95,
+      usageStream: true
     },
     hunyuan: {
       name: '混元-lite',
       baseUrl: 'https://hunyuan.tencentcloudapi.com/v2',
       defaultModel: 'hunyuan-lite',
-      models: ['hunyuan-lite', 'hunyuan-turbo']
+      models: ['hunyuan-lite', 'hunyuan-turbo'],
+      usageStream: false
     },
     custom: {
       name: '自定义 (OpenAI 兼容)',
       baseUrl: '',
       defaultModel: '',
-      models: []
+      models: [],
+      usageStream: true
     }
   };
 
   const DEFAULT_SYSTEM_PROMPT = `你是一个毒舌的助手，说话直白犀利。
 如果用户反复听不懂同一个知识点，可以直白吐槽用户理解慢、不动脑子，语气尖锐，但严禁输出任何脏话、辱骂词汇。
 不要使用污言秽语，只做理性犀利吐槽。`;
+
+  /* ===================== 价格表（每百万 tokens，人民币 ¥，参考价） ===================== */
+  /* 数值可在此手动修改以匹配你看到的最新官方价格。DeepSeek 为峰谷定价，off 为闲时。 */
+  const PRICING = {
+    deepseek: {
+      'deepseek-v4-flash': { in: 3.0, out: 9.0, cacheIn: 0.10, off: { in: 1.5, out: 4.5, cacheIn: 0.05 } },
+      'deepseek-v4-pro':   { in: 9.0, out: 27.0, cacheIn: 0.30, off: { in: 4.5, out: 13.5, cacheIn: 0.15 } }
+    },
+    kimi: {
+      'kimi-k3':                  { in: 21.6, out: 108, cacheIn: 2.16 },
+      'kimi-k2.7-code':           { in: 6, out: 24, cacheIn: 0.6 },
+      'kimi-k2.7-code-highspeed': { in: 4, out: 16, cacheIn: 0.4 },
+      'kimi-k2.6':                { in: 6, out: 24, cacheIn: 0.6 },
+      'kimi-k2.5':                { in: 6, out: 24, cacheIn: 0.6 },
+      'moonshot-v1-8k':           { in: 2, out: 10, cacheIn: 0.2 },
+      'moonshot-v1-32k':          { in: 2, out: 10, cacheIn: 0.2 },
+      'moonshot-v1-128k':         { in: 2, out: 10, cacheIn: 0.2 }
+    },
+    hunyuan: {
+      'hunyuan-lite':  { in: 0, out: 0, cacheIn: 0 },
+      'hunyuan-turbo': { in: 3, out: 9, cacheIn: 0.3 }
+    }
+  };
+
+  function beijingHour() {
+    const s = new Date().toLocaleString('en-US', { timeZone: 'Asia/Shanghai', hour: '2-digit', hour12: false });
+    return parseInt(s, 10) % 24;
+  }
+  function isBeijingPeak() {
+    const h = beijingHour();
+    return (h >= 9 && h < 12) || (h >= 14 && h < 18);
+  }
+  function getRates(providerId, model) {
+    const p = PRICING[providerId]?.[model];
+    if (!p) return null;
+    if (p.off) {
+      return isBeijingPeak()
+        ? { in: p.in, out: p.out, cacheIn: p.cacheIn, peak: true }
+        : { in: p.off.in, out: p.off.out, cacheIn: p.off.cacheIn, peak: false };
+    }
+    return { in: p.in, out: p.out, cacheIn: p.cacheIn, peak: null };
+  }
+  function computeCost(providerId, model, usage) {
+    const r = getRates(providerId, model);
+    if (!r || !usage) return null;
+    const cached = usage.cached_tokens || 0;
+    const uncachedIn = Math.max(0, (usage.prompt_tokens || 0) - cached);
+    const inCost = uncachedIn / 1e6 * r.in + cached / 1e6 * r.cacheIn;
+    const outCost = (usage.completion_tokens || 0) / 1e6 * r.out;
+    return inCost + outCost;
+  }
+  function fmtCost(c) {
+    if (c === null || c === undefined) return '—';
+    if (c === 0) return '0.0000';
+    return '¥' + c.toFixed(c >= 0.01 ? 3 : 4);
+  }
+  function normalizeUsage(u) {
+    if (!u) return null;
+    return {
+      prompt_tokens: u.prompt_tokens || 0,
+      completion_tokens: u.completion_tokens || 0,
+      total_tokens: u.total_tokens || 0,
+      cached_tokens: u.prompt_tokens_details?.cached_tokens || u.cached_tokens || 0
+    };
+  }
+  function buildMetaTag(msg) {
+    if (msg.role !== 'assistant' || (!msg.model && !msg.usage)) return '';
+    const parts = [];
+    if (msg.model) parts.push(`实际模型：${escapeHtml(msg.model)}`);
+    if (msg.usage) {
+      const u = msg.usage;
+      let s = `Token：输入 ${u.prompt_tokens} · 输出 ${u.completion_tokens}`;
+      if (u.cached_tokens) s += ` · 缓存 ${u.cached_tokens}`;
+      const cost = computeCost(msg.providerId || config.providerId, msg.model || config.providers[config.providerId].defaultModel, u);
+      if (cost !== null) s += ` · 费用：${fmtCost(cost)}`;
+      parts.push(s);
+    }
+    return `<div class="model-tag">${parts.join(' · ')}</div>`;
+  }
+  function sessionTotals(session) {
+    let inT = 0, outT = 0, cachedT = 0, cost = 0;
+    for (const m of session.messages) {
+      if (m.role === 'assistant' && m.usage) {
+        inT += m.usage.prompt_tokens || 0;
+        outT += m.usage.completion_tokens || 0;
+        cachedT += m.usage.cached_tokens || 0;
+        const c = computeCost(m.providerId, m.model, m.usage);
+        if (c !== null) cost += c;
+      }
+    }
+    return { total: inT + outT, inT, outT, cachedT, cost };
+  }
 
   const STORAGE_KEYS = {
     config: 'agent_console_config',
@@ -882,6 +983,8 @@
     msgCount: document.getElementById('msgCount'),
     curProvider: document.getElementById('curProvider'),
     curModel: document.getElementById('curModel'),
+    sessionTokens: document.getElementById('sessionTokens'),
+    sessionCost: document.getElementById('sessionCost'),
     btnNewChat: document.getElementById('btnNewChat'),
     btnSettings: document.getElementById('btnSettings'),
     messages: document.getElementById('messages'),
@@ -1092,8 +1195,7 @@
             <button data-action="copy" title="复制内容">复制</button>
             <button data-action="edit" title="编辑">编辑</button>
           </div>`;
-      const modelTag = (!isPending && msg.role === 'assistant' && msg.model)
-        ? `<div class="model-tag">实际模型：${escapeHtml(msg.model)}</div>` : '';
+      const modelTag = (!isPending && msg.role === 'assistant') ? buildMetaTag(msg) : '';
       div.innerHTML = `
         <div class="avatar">${avatar}</div>
         <div class="bubble">
@@ -1125,6 +1227,9 @@
     }
     const count = session ? session.messages.filter(m => m.role !== 'system').length : 0;
     els.msgCount.textContent = count;
+    const totals = session ? sessionTotals(session) : { total: 0, cost: 0 };
+    if (els.sessionTokens) els.sessionTokens.textContent = totals.total.toLocaleString();
+    if (els.sessionCost) els.sessionCost.textContent = fmtCost(totals.cost);
   }
 
   function renderMarkdown(text) {
@@ -1391,7 +1496,7 @@
 
     isGenerating = true;
     els.btnSend.disabled = true;
-    const assistantMsg = { role: 'assistant', content: '', pending: true };
+    const assistantMsg = { role: 'assistant', content: '', pending: true, providerId: config.providerId, model: model };
     session.messages.push(assistantMsg);
     renderMessages();
 
@@ -1415,7 +1520,8 @@
       stream: true,
       temperature: forcedParams.temperature !== undefined ? forcedParams.temperature : config.params.temperature,
       max_tokens: config.params.max_tokens,
-      top_p: forcedParams.top_p !== undefined ? forcedParams.top_p : config.params.top_p
+      top_p: forcedParams.top_p !== undefined ? forcedParams.top_p : config.params.top_p,
+      ...(provider.usageStream ? { stream_options: { include_usage: true } } : {})
     };
 
     for (const plugin of plugins) {
@@ -1453,6 +1559,7 @@
         const data = await resp.json();
         assistantMsg.content = data.choices?.[0]?.message?.content || '';
         assistantMsg.model = data.model || assistantMsg.model;
+        assistantMsg.usage = normalizeUsage(data.usage);
         finishInference(session);
       }
     } catch (err) {
@@ -1488,6 +1595,7 @@
         try {
           const json = JSON.parse(data);
           if (json.model && !assistantMsg.model) assistantMsg.model = json.model;
+          if (json.usage) assistantMsg.usage = normalizeUsage(json.usage);
           const delta = json.choices?.[0]?.delta?.content || '';
           if (delta) {
             if (assistantMsg.pending) {
@@ -1508,7 +1616,7 @@
     if (bubble) {
       const lastMsg = session.messages[session.messages.length - 1];
       const html = renderMarkdown(lastMsg.content);
-      const modelTag = lastMsg.model ? `<div class="model-tag">实际模型：${escapeHtml(lastMsg.model)}</div>` : '';
+      const modelTag = buildMetaTag(lastMsg);
       bubble.innerHTML = html + modelTag + `
         <div class="msg-actions">
           <button data-action="copy">复制</button>
