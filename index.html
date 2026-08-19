@@ -1,0 +1,1619 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agent Console</title>
+  <meta name="description" content="本地纯前端 LLM 对话工具台，支持多 Provider 切换，数据只存本地。" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css" />
+  <style>
+    :root {
+      --bg: #ffffff;
+      --surface: #f8f9fa;
+      --surface-2: #f1f3f5;
+      --surface-3: #e9ecef;
+      --border: #dee2e6;
+      --text: #212529;
+      --text-2: #495057;
+      --text-3: #868e96;
+      --accent: #228be6;
+      --accent-2: #40c057;
+      --danger: #fa5252;
+      --warning: #fab005;
+      --radius: 10px;
+      --shadow: 0 10px 30px rgba(0,0,0,0.12);
+      --sidebar-w: 260px;
+      --panel-w: 320px;
+      --topbar-h: 56px;
+      --composer-h: 76px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      overflow: hidden;
+    }
+
+    button, input, textarea, select {
+      font: inherit;
+      color: inherit;
+      background: none;
+      border: none;
+      outline: none;
+    }
+
+    button { cursor: pointer; }
+
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #adb5bd; }
+
+    .app {
+      display: flex;
+      height: 100vh;
+      width: 100vw;
+    }
+
+    /* Sidebar */
+    .sidebar {
+      width: var(--sidebar-w);
+      min-width: var(--sidebar-w);
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      padding: 16px 12px;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 18px;
+      font-weight: 600;
+      padding: 0 8px 16px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 16px;
+    }
+    .logo-mark { color: var(--accent); }
+
+    .sidebar-section { margin-bottom: 18px; }
+    .sidebar-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-3);
+      margin-bottom: 8px;
+      padding: 0 8px;
+    }
+
+    .btn-new {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: var(--radius);
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: background .15s, border-color .15s;
+    }
+    .btn-new:hover { background: var(--surface-3); border-color: #adb5bd; }
+
+    .session-list {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-height: 0;
+    }
+
+    .session-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 10px 10px 14px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      color: var(--text-2);
+      transition: background .15s, color .15s;
+    }
+    .session-item:hover { background: var(--surface-2); color: var(--text); }
+    .session-item.active { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+
+    .session-title {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+    }
+
+    .session-del {
+      opacity: 0;
+      padding: 4px;
+      border-radius: 6px;
+      color: var(--text-3);
+      transition: opacity .15s, background .15s;
+    }
+    .session-item:hover .session-del { opacity: 1; }
+    .session-del:hover { background: rgba(239,68,68,0.12); color: var(--danger); }
+
+    .meta {
+      border-top: 1px solid var(--border);
+      padding-top: 14px;
+    }
+    .meta-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 5px 8px;
+      font-size: 12px;
+    }
+    .meta-key { color: var(--text-3); }
+    .meta-val { color: var(--text-2); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .sidebar-bottom {
+      margin-top: auto;
+      border-top: 1px solid var(--border);
+      padding-top: 12px;
+    }
+
+    .btn-icon {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      border-radius: var(--radius);
+      color: var(--text-2);
+      transition: background .15s, color .15s;
+    }
+    .btn-icon:hover { background: var(--surface-2); color: var(--text); }
+
+    /* Main */
+    .main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      background: var(--bg);
+      position: relative;
+    }
+
+    .topbar {
+      height: var(--topbar-h);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      background: rgba(255,255,255,0.85);
+      backdrop-filter: blur(10px);
+    }
+    .topbar-title { font-weight: 600; font-size: 15px; }
+    .topbar-actions { display: flex; gap: 10px; align-items: center; }
+
+    .select-thin {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 7px 28px 7px 12px;
+      color: var(--text);
+      font-size: 13px;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      cursor: pointer;
+      max-width: 180px;
+    }
+    .select-thin:hover { border-color: #adb5bd; }
+
+    .messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px 12%;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      scroll-behavior: smooth;
+    }
+
+    .empty {
+      margin: auto;
+      text-align: center;
+      color: var(--text-2);
+    }
+    .empty-mark { font-size: 48px; color: var(--accent); margin-bottom: 12px; }
+    .empty-title { font-size: 18px; color: var(--text); margin-bottom: 6px; }
+    .empty-sub { font-size: 13px; color: var(--text-3); }
+
+    .message {
+      display: flex;
+      gap: 14px;
+      max-width: 100%;
+    }
+    .message.user { flex-direction: row-reverse; }
+
+    .avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      flex-shrink: 0;
+      background: var(--surface-2);
+      color: var(--text-2);
+      border: 1px solid var(--border);
+    }
+    .message.user .avatar { background: var(--accent); color: #ffffff; }
+    .message.assistant .avatar { background: var(--accent-2); color: #ffffff; }
+
+    .bubble {
+      max-width: min(80%, 760px);
+      padding: 14px 18px;
+      border-radius: 18px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      line-height: 1.65;
+      overflow-wrap: break-word;
+    }
+    .message.user .bubble {
+      background: var(--surface-2);
+      border-color: var(--border);
+    }
+
+    .bubble h1, .bubble h2, .bubble h3, .bubble h4 { margin: 16px 0 8px; color: var(--text); }
+    .bubble p { margin: 0 0 10px; }
+    .bubble p:last-child { margin-bottom: 0; }
+    .bubble ul, .bubble ol { margin: 8px 0; padding-left: 22px; }
+    .bubble li { margin: 4px 0; }
+    .bubble code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      background: rgba(255,255,255,0.08);
+      padding: 2px 5px;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+
+    .code-block {
+      margin: 12px 0;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      background: #f6f8fa;
+    }
+    .code-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px;
+      background: #eef1f5;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      color: #4b5563;
+    }
+    .code-header button {
+      padding: 4px 8px;
+      border-radius: 6px;
+      color: #374151;
+      font-size: 12px;
+      transition: background .15s;
+    }
+    .code-header button:hover { background: #d1d5db; color: #111827; }
+
+    .bubble pre {
+      margin: 0;
+      padding: 14px;
+      overflow-x: auto;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .bubble pre code {
+      background: transparent;
+      padding: 0;
+      font-size: inherit;
+    }
+
+    .msg-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 8px;
+      opacity: 0;
+      transition: opacity .15s;
+    }
+    .message:hover .msg-actions { opacity: 1; }
+    .msg-actions button {
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      color: var(--text-3);
+      transition: background .15s, color .15s;
+    }
+    .msg-actions button:hover { background: var(--surface-2); color: var(--text); }
+
+    .composer {
+      height: var(--composer-h);
+      border-top: 1px solid var(--border);
+      padding: 8px 12% 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      justify-content: flex-end;
+      background: var(--bg);
+    }
+
+    .composer-hint {
+      font-size: 11px;
+      color: var(--text-3);
+      padding-left: 4px;
+    }
+    .composer-hint span {
+      color: var(--text-2);
+      font-weight: 600;
+    }
+
+    .composer-row {
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+    }
+
+    .composer textarea {
+      flex: 1;
+      min-height: 44px;
+      max-height: 140px;
+      resize: none;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 13px 16px;
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .composer textarea:focus { border-color: var(--accent); background: var(--surface-2); }
+    .composer textarea::placeholder { color: var(--text-3); }
+
+    .btn-send {
+      width: 48px;
+      height: 48px;
+      border-radius: 14px;
+      background: var(--accent);
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform .1s, filter .15s;
+      flex-shrink: 0;
+    }
+    .btn-send:hover { filter: brightness(1.1); }
+    .btn-send:active { transform: scale(0.96); }
+    .btn-send:disabled { opacity: .5; cursor: not-allowed; }
+
+    .typing-dot {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--text-2);
+      margin: 0 2px;
+      animation: typing 1.4s infinite ease-in-out both;
+    }
+    .typing-dot:nth-child(1) { animation-delay: -0.32s; }
+    .typing-dot:nth-child(2) { animation-delay: -0.16s; }
+    @keyframes typing {
+      0%, 80%, 100% { transform: scale(0); }
+      40% { transform: scale(1); }
+    }
+
+    /* Right panel */
+    .panel-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.4);
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity .2s, visibility .2s;
+      z-index: 90;
+    }
+    .panel-overlay.open { opacity: 1; visibility: visible; }
+
+    .panel {
+      position: fixed;
+      top: 0;
+      right: 0;
+      width: var(--panel-w);
+      max-width: 90vw;
+      height: 100%;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      transform: translateX(100%);
+      transition: transform .25s ease;
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+    }
+    .panel.open { transform: translateX(0); }
+
+    .panel-head {
+      height: var(--topbar-h);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 18px;
+      font-weight: 600;
+    }
+    .panel-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+    }
+    .panel-foot {
+      border-top: 1px solid var(--border);
+      padding: 14px 16px;
+      display: flex;
+      gap: 8px;
+    }
+
+    .field { margin-bottom: 18px; }
+    .field label {
+      display: block;
+      font-size: 12px;
+      color: var(--text-2);
+      margin-bottom: 6px;
+      font-weight: 500;
+    }
+    .field input[type="text"],
+    .field input[type="password"],
+    .field select,
+    .field textarea {
+      width: 100%;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 9px 11px;
+      color: var(--text);
+      font-size: 13px;
+    }
+    .field input:focus, .field select:focus, .field textarea:focus { border-color: var(--accent); }
+    .field textarea { resize: vertical; }
+
+    .key-row { display: flex; gap: 8px; }
+    .key-row input { flex: 1; }
+
+    .btn-ghost {
+      padding: 8px 12px;
+      border-radius: 8px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 12px;
+      transition: background .15s;
+      white-space: nowrap;
+    }
+    .btn-ghost:hover { background: var(--surface-3); }
+    .btn-ghost.danger { color: var(--danger); border-color: rgba(239,68,68,0.3); }
+    .btn-ghost.danger:hover { background: rgba(239,68,68,0.12); }
+
+    .btn-primary {
+      padding: 9px 16px;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #ffffff;
+      font-weight: 600;
+      font-size: 13px;
+      transition: filter .15s;
+      flex: 1;
+    }
+    .btn-primary:hover { filter: brightness(1.1); }
+
+    .hint {
+      font-size: 11px;
+      color: var(--text-3);
+      margin-top: 6px;
+      line-height: 1.45;
+    }
+
+    .param-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .param-row input[type="range"] { flex: 1; margin: 0 10px; }
+    .param-val {
+      min-width: 44px;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      color: var(--text-2);
+    }
+
+    .privacy-note {
+      margin-top: 10px;
+      padding: 12px;
+      border-radius: 8px;
+      background: rgba(34,139,230,0.06);
+      border: 1px solid rgba(34,139,230,0.15);
+      font-size: 11px;
+      color: var(--text-2);
+    }
+    .privacy-note ul { margin: 6px 0 0; padding-left: 18px; }
+    .privacy-note li { margin: 3px 0; }
+
+    /* Code modal */
+    .code-modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 200;
+      padding: 40px;
+    }
+    .code-modal-overlay.open { display: flex; }
+
+    .code-modal {
+      width: 90%;
+      max-width: 960px;
+      height: 90%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+    .code-modal-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+    .code-modal-title { font-weight: 600; }
+    .code-modal-body {
+      flex: 1;
+      overflow: auto;
+      background: #f6f8fa;
+    }
+    .code-modal-body pre {
+      margin: 0;
+      padding: 20px;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px 18px;
+      border-radius: 20px;
+      font-size: 13px;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity .2s, transform .2s, visibility .2s;
+      z-index: 300;
+    }
+    .toast.show { opacity: 1; visibility: visible; transform: translateX(-50%) translateY(0); }
+
+    .btn-close-x {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-2);
+      font-size: 18px;
+      transition: background .15s, color .15s;
+    }
+    .btn-close-x:hover { background: var(--surface-2); color: var(--text); }
+
+    @media (max-width: 900px) {
+      .sidebar { display: none; }
+      .messages, .composer { padding-left: 4%; padding-right: 4%; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="logo">
+      <span class="logo-mark">◆</span>
+      <span class="logo-text">Agent Console</span>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">对话</div>
+      <button class="btn-new" id="btnNewChat">+ 新对话</button>
+    </div>
+
+    <div class="session-list" id="sessionList"></div>
+
+    <div class="sidebar-section meta">
+      <div class="meta-row"><span class="meta-key">消息</span><span class="meta-val" id="msgCount">0</span></div>
+      <div class="meta-row"><span class="meta-key">Provider</span><span class="meta-val" id="curProvider">—</span></div>
+      <div class="meta-row"><span class="meta-key">模型</span><span class="meta-val" id="curModel">—</span></div>
+    </div>
+
+    <div class="sidebar-bottom">
+      <button class="btn-icon" id="btnSettings">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span>设置</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+    <header class="topbar">
+      <div class="topbar-title">对话</div>
+      <div class="topbar-actions">
+        <select id="providerSelect" class="select-thin" title="选择 Provider"></select>
+        <select id="modelSelect" class="select-thin" title="选择模型"></select>
+      </div>
+    </header>
+
+    <div class="messages" id="messages">
+      <div class="empty" id="emptyHint">
+        <div class="empty-mark">◆</div>
+        <div class="empty-title">开始一段对话</div>
+        <div class="empty-sub">选择 Provider、填入 API Key 后即可发送消息</div>
+      </div>
+    </div>
+
+    <div class="composer">
+      <div class="composer-hint" id="composerHint">将向 <span id="targetModel">—</span> 发送请求</div>
+      <div class="composer-row">
+        <textarea id="input" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
+        <button class="btn-send" id="btnSend" title="发送">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-2z"/></svg>
+        </button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- Settings Panel -->
+<div class="panel-overlay" id="panelOverlay"></div>
+<aside class="panel" id="settingsPanel">
+  <div class="panel-head">
+    <span>设置</span>
+    <button class="btn-close-x" id="btnClosePanel">×</button>
+  </div>
+  <div class="panel-body">
+    <div class="field">
+      <label>当前 Provider</label>
+      <select id="cfgProviderSelect"></select>
+    </div>
+
+    <div class="field">
+      <label>API Key</label>
+      <div class="key-row">
+        <input type="password" id="cfgApiKey" placeholder="sk-..." />
+        <button class="btn-ghost" id="btnSaveKey">保存</button>
+        <button class="btn-ghost danger" id="btnClearKey">清除</button>
+      </div>
+      <div class="hint" id="keyHint">Key 仅保存在浏览器本地，不会上传到任何服务器。</div>
+    </div>
+
+    <div class="field">
+      <label>Base URL（可选，覆盖默认）</label>
+      <input type="text" id="cfgBaseUrl" placeholder="https://api.xxx.com/v1" />
+      <div class="hint">用于解决浏览器 CORS 限制时可填入自己的代理地址。</div>
+    </div>
+
+    <div class="field">
+      <label>模型列表（每行一个）</label>
+      <textarea id="cfgModels" rows="4" placeholder="deepseek-chat&#10;deepseek-reasoner"></textarea>
+      <button class="btn-ghost" id="btnSaveProvider" style="margin-top:8px;">保存 Provider 配置</button>
+    </div>
+
+    <div class="field">
+      <label>系统提示词</label>
+      <textarea id="systemPrompt" rows="5" placeholder="定义助手的角色和语气"></textarea>
+    </div>
+
+    <div class="field">
+      <label>参数</label>
+      <div class="param-row">
+        <span>Temperature</span>
+        <input type="range" id="temperature" min="0" max="2" step="0.1" value="0.7" />
+        <span class="param-val" id="temperatureVal">0.7</span>
+      </div>
+      <div class="param-row">
+        <span>Max Tokens</span>
+        <input type="range" id="maxTokens" min="256" max="8192" step="256" value="2048" />
+        <span class="param-val" id="maxTokensVal">2048</span>
+      </div>
+      <div class="param-row">
+        <span>Top P</span>
+        <input type="range" id="topP" min="0" max="1" step="0.05" value="1" />
+        <span class="param-val" id="topPVal">1</span>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>插件（可选）</label>
+      <div class="hint">通过页面 URL 参数或控制台注册插件。详见 README。</div>
+    </div>
+
+    <div class="privacy-note">
+      <div style="font-weight:600;color:var(--text);margin-bottom:4px;">隐私说明</div>
+      <ul>
+        <li>API Key 与聊天记录只保存在浏览器 localStorage。</li>
+        <li>本页面没有后端，请求直接由浏览器发往你选择的 Provider。</li>
+        <li>源码完全开源，可自行审计。</li>
+      </ul>
+    </div>
+  </div>
+  <div class="panel-foot">
+    <button class="btn-ghost danger" id="btnResetHistory">清空历史</button>
+    <button class="btn-ghost danger" id="btnClearAll">清空所有数据</button>
+    <button class="btn-primary" id="btnDone">完成</button>
+  </div>
+</aside>
+
+<!-- Code Viewer Modal -->
+<div class="code-modal-overlay" id="codeModalOverlay">
+  <div class="code-modal">
+    <div class="code-modal-head">
+      <span class="code-modal-title" id="codeModalTitle">代码</span>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-ghost" id="btnCopyCode">复制</button>
+        <button class="btn-close-x" id="btnCloseCode">×</button>
+      </div>
+    </div>
+    <div class="code-modal-body">
+      <pre><code id="codeModalBody"></code></pre>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/highlight.min.js"></script>
+<script>
+  /* ===================== 默认配置 ===================== */
+  const DEFAULT_PROVIDERS = {
+    deepseek: {
+      name: 'DeepSeek',
+      baseUrl: 'https://api.deepseek.com/v1',
+      defaultModel: 'deepseek-chat',
+      models: ['deepseek-chat', 'deepseek-reasoner', 'deepseek-v4-flash', 'deepseek-v4-pro']
+    },
+    kimi: {
+      name: 'Kimi',
+      baseUrl: 'https://api.moonshot.cn/v1',
+      defaultModel: 'kimi-k3',
+      models: ['kimi-k3', 'kimi-k2.7-code', 'kimi-k2.7-code-highspeed', 'kimi-k2.6', 'kimi-k2.5', 'moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
+      temperature: 1,
+      top_p: 0.95
+    },
+    hunyuan: {
+      name: '混元-lite',
+      baseUrl: 'https://hunyuan.tencentcloudapi.com/v2',
+      defaultModel: 'hunyuan-lite',
+      models: ['hunyuan-lite', 'hunyuan-turbo']
+    },
+    custom: {
+      name: '自定义 (OpenAI 兼容)',
+      baseUrl: '',
+      defaultModel: '',
+      models: []
+    }
+  };
+
+  const DEFAULT_SYSTEM_PROMPT = `你是一个毒舌的助手，说话直白犀利。
+如果用户反复听不懂同一个知识点，可以直白吐槽用户理解慢、不动脑子，语气尖锐，但严禁输出任何脏话、辱骂词汇。
+不要使用污言秽语，只做理性犀利吐槽。`;
+
+  const STORAGE_KEYS = {
+    config: 'agent_console_config',
+    sessions: 'agent_console_sessions'
+  };
+
+  /* ===================== 状态 ===================== */
+  let config = loadConfig();
+  let sessions = loadSessions();
+  let currentSessionId = sessions[0]?.id || null;
+  let isGenerating = false;
+  let abortController = null;
+  let plugins = [];
+
+  /* ===================== DOM 引用 ===================== */
+  const els = {
+    sessionList: document.getElementById('sessionList'),
+    msgCount: document.getElementById('msgCount'),
+    curProvider: document.getElementById('curProvider'),
+    curModel: document.getElementById('curModel'),
+    btnNewChat: document.getElementById('btnNewChat'),
+    btnSettings: document.getElementById('btnSettings'),
+    messages: document.getElementById('messages'),
+    emptyHint: document.getElementById('emptyHint'),
+    input: document.getElementById('input'),
+    btnSend: document.getElementById('btnSend'),
+    providerSelect: document.getElementById('providerSelect'),
+    modelSelect: document.getElementById('modelSelect'),
+    panelOverlay: document.getElementById('panelOverlay'),
+    settingsPanel: document.getElementById('settingsPanel'),
+    btnClosePanel: document.getElementById('btnClosePanel'),
+    cfgProviderSelect: document.getElementById('cfgProviderSelect'),
+    cfgApiKey: document.getElementById('cfgApiKey'),
+    btnSaveKey: document.getElementById('btnSaveKey'),
+    btnClearKey: document.getElementById('btnClearKey'),
+    keyHint: document.getElementById('keyHint'),
+    cfgBaseUrl: document.getElementById('cfgBaseUrl'),
+    cfgModels: document.getElementById('cfgModels'),
+    btnSaveProvider: document.getElementById('btnSaveProvider'),
+    systemPrompt: document.getElementById('systemPrompt'),
+    temperature: document.getElementById('temperature'),
+    temperatureVal: document.getElementById('temperatureVal'),
+    maxTokens: document.getElementById('maxTokens'),
+    maxTokensVal: document.getElementById('maxTokensVal'),
+    topP: document.getElementById('topP'),
+    topPVal: document.getElementById('topPVal'),
+    btnResetHistory: document.getElementById('btnResetHistory'),
+    btnClearAll: document.getElementById('btnClearAll'),
+    btnDone: document.getElementById('btnDone'),
+    codeModalOverlay: document.getElementById('codeModalOverlay'),
+    codeModalTitle: document.getElementById('codeModalTitle'),
+    codeModalBody: document.getElementById('codeModalBody'),
+    btnCopyCode: document.getElementById('btnCopyCode'),
+    btnCloseCode: document.getElementById('btnCloseCode'),
+    toast: document.getElementById('toast'),
+    targetModel: document.getElementById('targetModel')
+  };
+
+  /* ===================== localStorage ===================== */
+  function loadConfig() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.config);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return mergeConfig(parsed);
+      }
+    } catch (e) { console.error('loadConfig', e); }
+    return defaultConfig();
+  }
+
+  function defaultConfig() {
+    return {
+      providerId: 'deepseek',
+      providers: structuredClone(DEFAULT_PROVIDERS),
+      systemPrompt: DEFAULT_SYSTEM_PROMPT,
+      params: { temperature: 0.7, max_tokens: 2048, top_p: 1 }
+    };
+  }
+
+  function mergeConfig(parsed) {
+    const def = defaultConfig();
+    const merged = {
+      providerId: parsed.providerId || def.providerId,
+      providers: {},
+      systemPrompt: parsed.systemPrompt ?? def.systemPrompt,
+      params: { ...def.params, ...(parsed.params || {}) }
+    };
+    for (const key of Object.keys(def.providers)) {
+      const saved = parsed.providers?.[key] || {};
+      merged.providers[key] = {
+        ...def.providers[key],
+        ...saved,
+        models: mergeModels(def.providers[key].models, saved.models)
+      };
+    }
+    if (parsed.providers?.custom) {
+      merged.providers.custom = {
+        ...def.providers.custom,
+        ...parsed.providers.custom,
+        name: parsed.providers.custom.name || def.providers.custom.name
+      };
+    }
+    return merged;
+  }
+
+  function mergeModels(defaultModels, savedModels) {
+    if (!Array.isArray(savedModels) || savedModels.length === 0) return defaultModels;
+    const set = new Set([...defaultModels, ...savedModels]);
+    return Array.from(set);
+  }
+
+  function saveConfig() {
+    localStorage.setItem(STORAGE_KEYS.config, JSON.stringify(config));
+  }
+
+  function loadSessions() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEYS.sessions);
+      if (raw) return JSON.parse(raw);
+    } catch (e) { console.error('loadSessions', e); }
+    return [];
+  }
+
+  function saveSessions() {
+    localStorage.setItem(STORAGE_KEYS.sessions, JSON.stringify(sessions));
+  }
+
+  /* ===================== 会话管理 ===================== */
+  function createSession() {
+    const id = crypto.randomUUID();
+    const session = {
+      id,
+      title: '新对话',
+      updatedAt: Date.now(),
+      messages: [{ role: 'system', content: config.systemPrompt }]
+    };
+    sessions.unshift(session);
+    currentSessionId = id;
+    saveSessions();
+    renderSessionList();
+    renderMessages();
+    return session;
+  }
+
+  function getCurrentSession() {
+    return sessions.find(s => s.id === currentSessionId);
+  }
+
+  function deleteSession(id) {
+    sessions = sessions.filter(s => s.id !== id);
+    if (currentSessionId === id) {
+      currentSessionId = sessions[0]?.id || null;
+    }
+    saveSessions();
+    renderSessionList();
+    renderMessages();
+  }
+
+  function updateSessionTitle(session) {
+    const firstUser = session.messages.find(m => m.role === 'user');
+    if (firstUser) {
+      session.title = firstUser.content.trim().slice(0, 20).replace(/\n/g, ' ') || '新对话';
+    }
+  }
+
+  /* ===================== 渲染 ===================== */
+  function renderSessionList() {
+    els.sessionList.innerHTML = '';
+    if (!sessions.length) {
+      els.sessionList.innerHTML = '<div style="padding:12px;color:var(--text-3);font-size:12px;text-align:center;">暂无对话</div>';
+      return;
+    }
+    sessions.forEach(session => {
+      const item = document.createElement('div');
+      item.className = 'session-item' + (session.id === currentSessionId ? ' active' : '');
+      item.innerHTML = `
+        <span class="session-title" title="${escapeHtml(session.title)}">${escapeHtml(session.title)}</span>
+        <button class="session-del" title="删除">×</button>
+      `;
+      item.addEventListener('click', (e) => {
+        if (e.target.classList.contains('session-del')) {
+          deleteSession(session.id);
+        } else {
+          currentSessionId = session.id;
+          renderSessionList();
+          renderMessages();
+        }
+      });
+      els.sessionList.appendChild(item);
+    });
+  }
+
+  function renderMessages() {
+    const session = getCurrentSession();
+    if (!session || session.messages.filter(m => m.role !== 'system').length === 0) {
+      els.messages.innerHTML = '';
+      els.messages.appendChild(els.emptyHint);
+      els.emptyHint.hidden = false;
+      updateMeta(session);
+      return;
+    }
+    els.emptyHint.hidden = true;
+    els.messages.innerHTML = '';
+    session.messages.forEach((msg, idx) => {
+      if (msg.role === 'system') return;
+      const div = document.createElement('div');
+      div.className = `message ${msg.role}`;
+      div.dataset.index = idx;
+      const avatar = msg.role === 'user' ? '你' : 'AI';
+      const html = renderMarkdown(msg.content);
+      div.innerHTML = `
+        <div class="avatar">${avatar}</div>
+        <div class="bubble">
+          ${html}
+          <div class="msg-actions">
+            <button data-action="copy" title="复制内容">复制</button>
+            <button data-action="edit" title="编辑">编辑</button>
+          </div>
+        </div>
+      `;
+      div.querySelector('[data-action="copy"]').addEventListener('click', () => copyText(msg.content));
+      div.querySelector('[data-action="edit"]').addEventListener('click', () => editMessage(idx));
+      els.messages.appendChild(div);
+    });
+    attachCodeClicks();
+    if (window.hljs) window.hljs.highlightAll();
+    scrollToBottom();
+    updateMeta(session);
+  }
+
+  function updateMeta(session) {
+    const provider = config.providers[config.providerId];
+    els.curProvider.textContent = provider?.name || '—';
+    els.curModel.textContent = provider?.defaultModel || '—';
+    if (els.targetModel) {
+      const tempHint = provider.temperature !== undefined ? ` · temperature=${provider.temperature}` : '';
+      const topPHint = provider.top_p !== undefined ? ` · top_p=${provider.top_p}` : '';
+      els.targetModel.textContent = provider ? `${provider.name} / ${provider.defaultModel || '—'}${tempHint}${topPHint}` : '—';
+    }
+    const count = session ? session.messages.filter(m => m.role !== 'system').length : 0;
+    els.msgCount.textContent = count;
+  }
+
+  function renderMarkdown(text) {
+    if (!window.marked) return escapeHtml(text).replace(/\n/g, '<br>');
+    marked.setOptions({ breaks: true, gfm: true });
+    return marked.parse(text);
+  }
+
+  function wrapCodeBlocks() {
+    document.querySelectorAll('.bubble pre > code').forEach(code => {
+      const pre = code.parentElement;
+      if (pre.parentElement && pre.parentElement.classList.contains('code-block')) return;
+      const klass = code.className || '';
+      const match = klass.match(/language-(\S+)/);
+      const lang = match ? match[1] : 'text';
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'code-block';
+      wrapper.dataset.lang = lang;
+      wrapper.innerHTML = `
+        <div class="code-header">
+          <span>${escapeHtml(lang)}</span>
+          <button data-action="expand-code">放大查看</button>
+        </div>
+      `;
+      pre.parentElement.insertBefore(wrapper, pre);
+      wrapper.appendChild(pre);
+    });
+  }
+
+  function attachCodeClicks() {
+    wrapCodeBlocks();
+    document.querySelectorAll('[data-action="expand-code"]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const block = e.target.closest('.code-block');
+        const code = block.querySelector('code').textContent;
+        const lang = block.dataset.lang;
+        openCodeModal(code, lang);
+      });
+    });
+  }
+
+  function openCodeModal(code, lang) {
+    els.codeModalTitle.textContent = `代码 · ${lang || 'text'}`;
+    els.codeModalBody.textContent = code;
+    els.codeModalBody.className = `language-${lang || 'text'}`;
+    if (window.hljs) window.hljs.highlightElement(els.codeModalBody);
+    els.codeModalOverlay.classList.add('open');
+  }
+
+  function closeCodeModal() {
+    els.codeModalOverlay.classList.remove('open');
+  }
+
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+  }
+
+  function scrollToBottom() {
+    els.messages.scrollTop = els.messages.scrollHeight;
+  }
+
+  function showToast(msg) {
+    els.toast.textContent = msg;
+    els.toast.classList.add('show');
+    setTimeout(() => els.toast.classList.remove('show'), 2000);
+  }
+
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast('已复制');
+    } catch (e) {
+      showToast('复制失败');
+    }
+  }
+
+  function editMessage(idx) {
+    const session = getCurrentSession();
+    if (!session) return;
+    const msg = session.messages[idx];
+    if (msg.role !== 'user') return;
+    els.input.value = msg.content;
+    session.messages = session.messages.slice(0, idx);
+    updateSessionTitle(session);
+    saveSessions();
+    renderSessionList();
+    renderMessages();
+    els.input.focus();
+  }
+
+  /* ===================== Provider / Model 选择 ===================== */
+  function populateProviderSelects() {
+    const selects = [els.providerSelect, els.cfgProviderSelect];
+    selects.forEach(select => {
+      select.innerHTML = '';
+      Object.entries(config.providers).forEach(([id, p]) => {
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = p.name;
+        select.appendChild(opt);
+      });
+    });
+    els.providerSelect.value = config.providerId;
+    els.cfgProviderSelect.value = config.providerId;
+    populateModelSelect();
+  }
+
+  function populateModelSelect() {
+    const provider = config.providers[config.providerId];
+    els.modelSelect.innerHTML = '';
+    provider.models.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m;
+      opt.textContent = m;
+      els.modelSelect.appendChild(opt);
+    });
+    if (provider.models.includes(provider.defaultModel)) {
+      els.modelSelect.value = provider.defaultModel;
+    } else if (provider.models.length) {
+      provider.defaultModel = provider.models[0];
+      els.modelSelect.value = provider.defaultModel;
+    }
+  }
+
+  function syncTopbarToConfig() {
+    config.providerId = els.providerSelect.value;
+    config.providers[config.providerId].defaultModel = els.modelSelect.value;
+    saveConfig();
+    populateProviderSelects();
+    if (els.settingsPanel.classList.contains('open')) {
+      loadPanelValues();
+    }
+    updateMeta(getCurrentSession());
+  }
+
+  /* ===================== 设置面板 ===================== */
+  function openPanel() {
+    els.panelOverlay.classList.add('open');
+    els.settingsPanel.classList.add('open');
+    loadPanelValues();
+  }
+
+  function closePanel() {
+    els.panelOverlay.classList.remove('open');
+    els.settingsPanel.classList.remove('open');
+    applyPanelValues();
+  }
+
+  function loadPanelValues() {
+    const provider = config.providers[config.providerId];
+    els.cfgProviderSelect.value = config.providerId;
+    els.cfgApiKey.value = provider.apiKey || '';
+    els.cfgBaseUrl.value = provider.baseUrl || '';
+    els.cfgModels.value = provider.models.join('\n');
+    els.systemPrompt.value = config.systemPrompt;
+    const providerTemperature = provider.temperature;
+    if (providerTemperature !== undefined) {
+      els.temperature.value = providerTemperature;
+      els.temperatureVal.textContent = providerTemperature + '（由 ' + provider.name + ' 强制）';
+      els.temperature.disabled = true;
+    } else {
+      els.temperature.value = config.params.temperature;
+      els.temperatureVal.textContent = config.params.temperature;
+      els.temperature.disabled = false;
+    }
+    const providerTopP = provider.top_p;
+    if (providerTopP !== undefined) {
+      els.topP.value = providerTopP;
+      els.topPVal.textContent = providerTopP + '（由 ' + provider.name + ' 强制）';
+      els.topP.disabled = true;
+    } else {
+      els.topP.value = config.params.top_p;
+      els.topPVal.textContent = config.params.top_p;
+      els.topP.disabled = false;
+    }
+    els.maxTokens.value = config.params.max_tokens;
+    els.maxTokensVal.textContent = config.params.max_tokens;
+    els.topP.value = config.params.top_p;
+    els.topPVal.textContent = config.params.top_p;
+    updateKeyHint();
+  }
+
+  function applyPanelValues() {
+    config.systemPrompt = els.systemPrompt.value.trim() || DEFAULT_SYSTEM_PROMPT;
+    config.params.temperature = parseFloat(els.temperature.value);
+    config.params.max_tokens = parseInt(els.maxTokens.value, 10);
+    config.params.top_p = parseFloat(els.topP.value);
+    saveConfig();
+    populateProviderSelects();
+    updateMeta(getCurrentSession());
+    updateSessionSystemPrompt();
+  }
+
+  function updateKeyHint() {
+    const provider = config.providers[config.providerId];
+    if (provider.apiKey) {
+      const masked = provider.apiKey.slice(0, 6) + '...' + provider.apiKey.slice(-4);
+      els.keyHint.textContent = `当前已保存：${masked}`;
+      els.keyHint.style.color = 'var(--accent)';
+    } else {
+      els.keyHint.textContent = 'Key 仅保存在浏览器本地，不会上传到任何服务器。';
+      els.keyHint.style.color = 'var(--text-3)';
+    }
+  }
+
+  function saveCurrentProviderConfig() {
+    const provider = config.providers[config.providerId];
+    provider.baseUrl = els.cfgBaseUrl.value.trim();
+    provider.models = els.cfgModels.value.split('\n').map(s => s.trim()).filter(Boolean);
+    if (provider.models.length && !provider.models.includes(provider.defaultModel)) {
+      provider.defaultModel = provider.models[0];
+    }
+    saveConfig();
+    populateModelSelect();
+    showToast('Provider 配置已保存');
+  }
+
+  function updateSessionSystemPrompt() {
+    sessions.forEach(s => {
+      const sysIdx = s.messages.findIndex(m => m.role === 'system');
+      if (sysIdx >= 0) s.messages[sysIdx].content = config.systemPrompt;
+      else s.messages.unshift({ role: 'system', content: config.systemPrompt });
+    });
+    saveSessions();
+  }
+
+  /* ===================== 发送消息 ===================== */
+  async function sendMessage() {
+    const text = els.input.value.trim();
+    if (!text || isGenerating) return;
+
+    const provider = config.providers[config.providerId];
+    if (!provider.apiKey) {
+      showToast('请先填写并保存 API Key');
+      openPanel();
+      return;
+    }
+
+    let session = getCurrentSession();
+    if (!session) session = createSession();
+
+    session.messages.push({ role: 'user', content: text });
+    updateSessionTitle(session);
+    session.updatedAt = Date.now();
+    saveSessions();
+    els.input.value = '';
+    autoResizeInput();
+    renderSessionList();
+    renderMessages();
+
+    await runInference(session);
+  }
+
+  async function runInference(session) {
+    const provider = config.providers[config.providerId];
+    const baseUrl = (provider.baseUrl || DEFAULT_PROVIDERS[config.providerId]?.baseUrl).replace(/\/$/, '');
+    const model = provider.defaultModel;
+
+    if (!baseUrl) {
+      appendError(session, '未配置 Base URL');
+      return;
+    }
+
+    isGenerating = true;
+    els.btnSend.disabled = true;
+    const assistantMsg = { role: 'assistant', content: '' };
+    session.messages.push(assistantMsg);
+    renderMessages();
+
+    const forcedParams = {
+      temperature: provider.temperature,
+      top_p: provider.top_p
+    };
+    const overridden = [];
+    for (const [k, v] of Object.entries(forcedParams)) {
+      if (v !== undefined && v !== config.params[k === 'top_p' ? 'top_p' : 'temperature']) {
+        overridden.push(`${k}=${v}`);
+      }
+    }
+    if (overridden.length) {
+      showToast(`${provider.name} 当前模型强制参数：${overridden.join(', ')}，已自动调整`);
+    }
+
+    const payload = {
+      model,
+      messages: session.messages.filter(m => m.role !== 'assistant' || m.content !== ''),
+      stream: true,
+      temperature: forcedParams.temperature !== undefined ? forcedParams.temperature : config.params.temperature,
+      max_tokens: config.params.max_tokens,
+      top_p: forcedParams.top_p !== undefined ? forcedParams.top_p : config.params.top_p
+    };
+
+    for (const plugin of plugins) {
+      if (typeof plugin.onBeforeSend === 'function') {
+        plugin.onBeforeSend(payload, config);
+      }
+    }
+
+    abortController = new AbortController();
+
+    try {
+      const resp = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${provider.apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload),
+        signal: abortController.signal
+      });
+
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => '');
+        throw new Error(`HTTP ${resp.status}: ${errText || resp.statusText}`);
+      }
+
+      if (resp.headers.get('content-type')?.includes('text/event-stream')) {
+        await handleStream(resp, assistantMsg, session);
+      } else {
+        const data = await resp.json();
+        assistantMsg.content = data.choices?.[0]?.message?.content || '';
+        finishInference(session);
+      }
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        assistantMsg.content = assistantMsg.content || '（已取消）';
+      } else if (err.message.includes('401')) {
+        assistantMsg.content = `请求出错：API Key 无效或已过期（HTTP 401）。请检查「${config.providers[config.providerId].name}」的 API Key 是否正确，注意不同 Provider 的 Key 不能混用。`;
+      } else {
+        assistantMsg.content = `请求出错：${err.message}`;
+      }
+      finishInference(session);
+    }
+  }
+
+  async function handleStream(resp, assistantMsg, session) {
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+        const data = trimmed.slice(5).trim();
+        if (data === '[DONE]') continue;
+        try {
+          const json = JSON.parse(data);
+          const delta = json.choices?.[0]?.delta?.content || '';
+          if (delta) {
+            assistantMsg.content += delta;
+            updateLastMessage(session);
+          }
+        } catch (e) { /* ignore malformed SSE */ }
+      }
+    }
+    finishInference(session);
+  }
+
+  function updateLastMessage(session) {
+    const bubble = els.messages.querySelector('.message.assistant:last-child .bubble');
+    if (bubble) {
+      const html = renderMarkdown(session.messages[session.messages.length - 1].content);
+      bubble.innerHTML = html + `
+        <div class="msg-actions">
+          <button data-action="copy">复制</button>
+          <button data-action="edit">编辑</button>
+        </div>`;
+      const copyBtn = bubble.querySelector('[data-action="copy"]');
+      const editBtn = bubble.querySelector('[data-action="edit"]');
+      copyBtn.addEventListener('click', () => copyText(session.messages[session.messages.length - 1].content));
+      editBtn.addEventListener('click', () => editMessage(session.messages.length - 1));
+      attachCodeClicks();
+      if (window.hljs) window.hljs.highlightAll();
+      scrollToBottom();
+    }
+  }
+
+  function finishInference(session) {
+    session.updatedAt = Date.now();
+    saveSessions();
+    isGenerating = false;
+    els.btnSend.disabled = false;
+    abortController = null;
+    renderMessages();
+  }
+
+  function appendError(session, msg) {
+    session.messages.push({ role: 'assistant', content: msg });
+    session.updatedAt = Date.now();
+    saveSessions();
+    renderMessages();
+  }
+
+  /* ===================== 插件系统 ===================== */
+  function registerPlugin(plugin) {
+    if (!plugin || !plugin.name) {
+      console.warn('[AgentConsole] 插件必须包含 name');
+      return;
+    }
+    plugins.push(plugin);
+    if (typeof plugin.onRegister === 'function') plugin.onRegister({ config, sessions, sendMessage });
+    console.log(`[AgentConsole] 插件已注册：${plugin.name}`);
+  }
+
+  window.AgentConsole = {
+    version: '1.0.0',
+    config,
+    sessions,
+    registerPlugin,
+    getPlugins: () => plugins,
+    sendMessage,
+    createSession,
+    getCurrentSession,
+    setConfig: (cfg) => { Object.assign(config, cfg); saveConfig(); populateProviderSelects(); },
+    setSessions: (s) => { sessions = s; saveSessions(); renderSessionList(); renderMessages(); }
+  };
+
+  /* ===================== 事件绑定 ===================== */
+  function bindEvents() {
+    els.btnNewChat.addEventListener('click', createSession);
+    els.btnSettings.addEventListener('click', openPanel);
+    els.btnClosePanel.addEventListener('click', closePanel);
+    els.panelOverlay.addEventListener('click', closePanel);
+    els.btnDone.addEventListener('click', closePanel);
+
+    els.providerSelect.addEventListener('change', syncTopbarToConfig);
+    els.modelSelect.addEventListener('change', () => {
+      config.providers[config.providerId].defaultModel = els.modelSelect.value;
+      saveConfig();
+      updateMeta(getCurrentSession());
+    });
+
+    els.cfgProviderSelect.addEventListener('change', () => {
+      config.providerId = els.cfgProviderSelect.value;
+      saveConfig();
+      loadPanelValues();
+      populateProviderSelects();
+      updateMeta(getCurrentSession());
+    });
+
+    els.btnSaveKey.addEventListener('click', () => {
+      const provider = config.providers[config.providerId];
+      provider.apiKey = els.cfgApiKey.value.trim();
+      saveConfig();
+      updateKeyHint();
+      showToast('API Key 已保存到本地');
+    });
+
+    els.btnClearKey.addEventListener('click', () => {
+      const provider = config.providers[config.providerId];
+      provider.apiKey = '';
+      els.cfgApiKey.value = '';
+      saveConfig();
+      updateKeyHint();
+      showToast('API Key 已清除');
+    });
+
+    els.btnSaveProvider.addEventListener('click', saveCurrentProviderConfig);
+
+    ['temperature', 'maxTokens', 'topP'].forEach(id => {
+      const input = els[id];
+      const val = els[id + 'Val'];
+      input.addEventListener('input', () => { val.textContent = input.value; });
+    });
+
+    els.btnResetHistory.addEventListener('click', () => {
+      sessions = [];
+      currentSessionId = null;
+      saveSessions();
+      renderSessionList();
+      renderMessages();
+      showToast('历史已清空');
+    });
+
+    els.btnClearAll.addEventListener('click', () => {
+      if (!confirm('确定清空所有本地数据（API Key、聊天记录、配置）？')) return;
+      localStorage.removeItem(STORAGE_KEYS.config);
+      localStorage.removeItem(STORAGE_KEYS.sessions);
+      config = defaultConfig();
+      sessions = [];
+      currentSessionId = null;
+      saveConfig();
+      saveSessions();
+      populateProviderSelects();
+      renderSessionList();
+      renderMessages();
+      showToast('所有本地数据已清空');
+    });
+
+    els.input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+    els.input.addEventListener('input', autoResizeInput);
+    els.btnSend.addEventListener('click', sendMessage);
+
+    els.btnCloseCode.addEventListener('click', closeCodeModal);
+    els.codeModalOverlay.addEventListener('click', (e) => {
+      if (e.target === els.codeModalOverlay) closeCodeModal();
+    });
+    els.btnCopyCode.addEventListener('click', () => copyText(els.codeModalBody.textContent));
+
+    const urlParams = new URLSearchParams(location.search);
+    const pluginUrl = urlParams.get('plugin');
+    if (pluginUrl) {
+      const script = document.createElement('script');
+      script.src = pluginUrl;
+      script.onload = () => showToast('插件加载完成');
+      script.onerror = () => showToast('插件加载失败');
+      document.body.appendChild(script);
+    }
+  }
+
+  function autoResizeInput() {
+    els.input.style.height = 'auto';
+    els.input.style.height = Math.min(els.input.scrollHeight, 160) + 'px';
+  }
+
+  /* ===================== 初始化 ===================== */
+  function init() {
+    populateProviderSelects();
+    renderSessionList();
+    renderMessages();
+    bindEvents();
+    autoResizeInput();
+    console.log('[AgentConsole] 已初始化。通过 AgentConsole.registerPlugin(plugin) 注册插件。');
+  }
+
+  init();
+</script>
+</body>
+</html>
+
