@@ -815,7 +815,11 @@
         <input type="text" id="pluginUrl" placeholder="https://.../my-plugin.js" />
         <button class="btn-ghost" id="btnInstallPlugin">安装</button>
       </div>
-      <div class="hint">已内置「半透明聊天背景」等插件，直接在下方列表<strong>勾选</strong>即可启用，无需安装。高级用户仍可粘贴外部 .js 地址安装自定义插件（仅安装可信来源）。</div>
+      <div class="plugin-install" style="margin-top:8px;">
+        <input type="file" id="pluginFile" accept=".js,application/javascript" style="flex:1;min-width:0;" />
+        <button class="btn-ghost" id="btnImportPlugin">导入</button>
+      </div>
+      <div class="hint">已内置「半透明聊天背景」插件，打开网页即生效，无需任何操作。可在此<strong>导入本地 .js 插件</strong>（像 MC mod 一样选文件即用，刷新后自动加载），或粘贴外部地址安装。仅导入你信任的插件。</div>
       <div class="plugin-list" id="pluginList"></div>
     </div>
 
@@ -1067,6 +1071,8 @@
     pluginList: document.getElementById('pluginList'),
     pluginUrl: document.getElementById('pluginUrl'),
     btnInstallPlugin: document.getElementById('btnInstallPlugin'),
+    pluginFile: document.getElementById('pluginFile'),
+    btnImportPlugin: document.getElementById('btnImportPlugin'),
     codeModalOverlay: document.getElementById('codeModalOverlay'),
     codeModalTitle: document.getElementById('codeModalTitle'),
     codeModalBody: document.getElementById('codeModalBody'),
@@ -1917,6 +1923,18 @@
     });
     els.btnCopyCode.addEventListener('click', () => copyText(els.codeModalBody.textContent));
 
+    // 导入式插件：选文件即用（像 MC mod 导入），刷新后自动加载
+    els.pluginFile.addEventListener('change', () => {
+      const f = els.pluginFile.files && els.pluginFile.files[0];
+      if (f) { importPluginFromFile(f); els.pluginFile.value = ''; }
+    });
+    els.btnImportPlugin.addEventListener('click', () => {
+      const f = els.pluginFile.files && els.pluginFile.files[0];
+      if (!f) { showToast('请先选择 .js 插件文件'); return; }
+      importPluginFromFile(f);
+      els.pluginFile.value = '';
+    });
+
     const urlParams = new URLSearchParams(location.search);
     const pluginUrl = urlParams.get('plugin');
     if (pluginUrl) {
@@ -2062,7 +2080,79 @@
         }
       };
     })();
-    registerPlugin(chatBgPlugin, false);
+    registerPlugin(chatBgPlugin, true);
+  }
+
+  /* ===================== 导入式插件（像 MC mod 选文件即用，刷新后保留） ===================== */
+  const IMPORTED_PLUGINS_KEY = 'ac_imported_plugins';
+  function getImportedPlugins() {
+    try { return JSON.parse(localStorage.getItem(IMPORTED_PLUGINS_KEY) || '{}'); }
+    catch (e) { return {}; }
+  }
+  function saveImportedPlugins(obj) {
+    try { localStorage.setItem(IMPORTED_PLUGINS_KEY, JSON.stringify(obj)); } catch (e) {}
+  }
+  // 执行插件源码（注入 <script> 同步执行，可访问全局 AgentConsole）
+  function evalPluginSource(source) {
+    try {
+      const s = document.createElement('script');
+      s.textContent = source;
+      document.head.appendChild(s);
+      return true;
+    } catch (e) {
+      console.warn('[AgentConsole] 插件执行失败：', e);
+      return false;
+    }
+  }
+  // 从本地 .js 文件导入：选文件即用，并持久化以便刷新后自动加载
+  function importPluginFromFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const source = String(reader.result || '');
+      const before = plugins.length;
+      if (!evalPluginSource(source)) { showToast('插件导入失败'); return; }
+      const added = plugins.slice(before);
+      if (added.length === 0) {
+        showToast('未检测到插件（文件需调用 AgentConsole.registerPlugin）');
+        return;
+      }
+      const store = getImportedPlugins();
+      added.forEach(p => { store[p.name] = source; });
+      saveImportedPlugins(store);
+      showToast('已导入插件：' + added.map(p => p.name).join('、') + '（刷新后自动加载）');
+      renderPluginList();
+    };
+    reader.onerror = () => showToast('文件读取失败');
+    reader.readAsText(file);
+  }
+  // 打开网页时自动加载已导入的插件（相当于读取 mods 文件夹）
+  function loadImportedPlugins() {
+    const store = getImportedPlugins();
+    Object.keys(store).forEach(name => {
+      evalPluginSource(store[name]);
+    });
+  }
+
+  /* ===================== 自动读取插件（打开网页即加载，无需粘贴地址） ===================== */
+  // 页面启动时自动加载同目录 plugins/manifest.json 中登记的插件（字符串数组，支持相对/绝对 URL）。
+  // 例：["plugins/example-plugin.js", "https://cdn.example.com/my-plugin.js"]
+  // 找不到 manifest 时静默跳过；插件脚本需自行调用 AgentConsole.registerPlugin。
+  function loadAutoPlugins() {
+    fetch('plugins/manifest.json', { cache: 'no-store' })
+      .then(r => { if (!r.ok) return null; return r.json(); })
+      .then(list => {
+        if (!Array.isArray(list)) return;
+        list.forEach(url => {
+          if (typeof url !== 'string' || !url) return;
+          const s = document.createElement('script');
+          s.src = url;
+          s.async = false;
+          s.onerror = () => console.warn('[AgentConsole] 自动插件加载失败：', url);
+          document.head.appendChild(s);
+        });
+      })
+      .catch(() => { /* 无 manifest 则静默跳过 */ });
   }
 
   /* ===================== 初始化 ===================== */
@@ -2073,6 +2163,8 @@
     bindEvents();
     autoResizeInput();
     registerBuiltins();
+    loadImportedPlugins();
+    loadAutoPlugins();
     console.log('[AgentConsole] 已初始化。通过 AgentConsole.registerPlugin(plugin) 注册插件。');
   }
 
