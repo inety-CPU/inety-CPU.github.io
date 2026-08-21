@@ -465,20 +465,30 @@
 
     .panel {
       position: fixed;
-      top: 0;
-      right: 0;
+      top: 50%;
+      left: 50%;
       width: var(--panel-w);
-      max-width: 90vw;
-      height: 100%;
+      max-width: min(94vw, 460px);
+      max-height: 88vh;
+      height: auto;
       background: var(--surface);
-      border-left: 1px solid var(--border);
-      transform: translateX(100%);
-      transition: transform .25s ease;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      transform: translate(-50%, -46%) scale(0.97);
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity .2s ease, transform .2s ease, visibility .2s;
       z-index: 100;
       display: flex;
       flex-direction: column;
+      overflow: hidden;
     }
-    .panel.open { transform: translateX(0); }
+    .panel.open {
+      transform: translate(-50%, -50%) scale(1);
+      opacity: 1;
+      visibility: visible;
+    }
 
     .panel-head {
       height: var(--topbar-h);
@@ -680,6 +690,45 @@
     }
     .btn-close-x:hover { background: var(--surface-2); color: var(--text); }
 
+    /* 插件停靠区：所有固定定位的插件控件会被自动竖排到右下方，避免互相/与按钮重叠 */
+    #acWhipBtn, #acMeritPanel, #acTtsPanel, .ac-dock-item { z-index: 980; }
+
+    /* 可拖动语音输入控件 */
+    .voice-widget {
+      position: fixed;
+      left: 18px;
+      bottom: 18px;
+      width: 170px;
+      background: rgba(16,16,32,.94);
+      color: #cfe;
+      border: 1px solid #5af4;
+      border-radius: 12px;
+      box-shadow: 0 0 18px #5af5;
+      z-index: 985;
+      font-size: 12px;
+      user-select: none;
+      overflow: hidden;
+    }
+    .voice-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 10px; cursor: move;
+      background: rgba(90,160,255,.18);
+      font-weight: 600; color: #9cf; touch-action: none;
+    }
+    .voice-body { padding: 10px; }
+    .voice-mic {
+      width: 100%; padding: 8px; border: none; border-radius: 8px;
+      background: linear-gradient(135deg,#5a9cff,#3a6cff); color: #fff;
+      font-weight: 700; cursor: pointer; font-size: 13px;
+    }
+    .voice-mic:active { transform: scale(.97); }
+    .voice-mic.listening {
+      background: linear-gradient(135deg,#ff5a7a,#ff3a5c);
+      animation: voicePulse 1s infinite;
+    }
+    @keyframes voicePulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+    .voice-status { margin-top: 6px; text-align: center; color: var(--text-2); font-size: 11px; }
+
     @media (max-width: 900px) {
       .sidebar { display: none; }
       .messages, .composer { padding-left: 4%; padding-right: 4%; }
@@ -838,6 +887,18 @@
     <button class="btn-primary" id="btnDone">完成</button>
   </div>
 </aside>
+
+<!-- 可拖动语音输入控件 -->
+<div class="voice-widget" id="voiceWidget">
+  <div class="voice-head" id="voiceHead">
+    <span>🎤 语音输入</span>
+    <span class="voice-toggle" id="voiceToggle">—</span>
+  </div>
+  <div class="voice-body" id="voiceBody">
+    <button class="voice-mic" id="voiceMic">点击说话</button>
+    <div class="voice-status" id="voiceStatus">拖动标题可移动</div>
+  </div>
+</div>
 
 <!-- Code Viewer Modal -->
 <div class="code-modal-overlay" id="codeModalOverlay">
@@ -1743,9 +1804,20 @@
   }
 
   function uninstallPlugin(name) {
+    const plugin = plugins.find(p => p.name === name);
+    if (plugin && typeof plugin.onDisable === 'function') {
+      try { plugin.onDisable(); } catch (e) {}
+    }
     plugins = plugins.filter(p => p.name !== name);
     delete pluginState[name];
     savePluginState();
+    // 关键修复：同时清除「导入式插件」的持久化源码，否则刷新网页后又会自动加载回来
+    const store = getImportedPlugins();
+    if (store && store[name]) {
+      delete store[name];
+      saveImportedPlugins(store);
+    }
+    showToast('已卸载插件：' + name);
     console.log(`[AgentConsole] 插件已卸载：${name}`);
     renderPluginList();
   }
@@ -2166,6 +2238,118 @@
     loadImportedPlugins();
     loadAutoPlugins();
     console.log('[AgentConsole] 已初始化。通过 AgentConsole.registerPlugin(plugin) 注册插件。');
+    setupVoiceWidget();
+    layoutDock();
+    window.addEventListener('resize', layoutDock);
+    setInterval(layoutDock, 600);
+    try {
+      const dockObs = new MutationObserver(layoutDock);
+      dockObs.observe(document.body, { childList: true, subtree: true });
+    } catch (_) {}
+  }
+
+  /* ===================== 插件自动停靠 ===================== */
+  // 把右下角固定定位的插件控件（已知 id + 通用 .ac-dock-item）竖排，避免互相重叠 / 与按钮打架
+  function layoutDock() {
+    const sel = '#acWhipBtn, #acMeritPanel, #acTtsPanel, .ac-dock-item';
+    const pri = { acTtsPanel: 0, acWhipBtn: 1, acMeritPanel: 2 };
+    const list = Array.prototype.slice.call(document.querySelectorAll(sel)).filter(function (el) {
+      const s = getComputedStyle(el);
+      return s.display !== 'none' && s.visibility !== 'hidden' && parseFloat(s.opacity || '1') >= 0.01;
+    }).sort(function (a, b) { return (pri[a.id] != null ? pri[a.id] : 9) - (pri[b.id] != null ? pri[b.id] : 9); });
+    let bottom = 14;
+    list.forEach(function (el) {
+      el.style.left = 'auto';
+      el.style.top = 'auto';
+      el.style.right = '14px';
+      el.style.bottom = bottom + 'px';
+      bottom += (el.offsetHeight || 120) + 12;
+    });
+  }
+
+  /* ===================== 可拖动语音输入控件 ===================== */
+  function setupVoiceWidget() {
+    const widget = document.getElementById('voiceWidget');
+    const head = document.getElementById('voiceHead');
+    const mic = document.getElementById('voiceMic');
+    const statusEl = document.getElementById('voiceStatus');
+    const toggle = document.getElementById('voiceToggle');
+    const body = document.getElementById('voiceBody');
+    if (!widget) return;
+
+    // 拖动（指针事件，兼容鼠标与触摸）
+    let dragging = false, sx = 0, sy = 0, ox = 0, oy = 0;
+    head.addEventListener('pointerdown', function (e) {
+      dragging = true;
+      const r = widget.getBoundingClientRect();
+      widget.style.left = r.left + 'px';
+      widget.style.top = r.top + 'px';
+      widget.style.right = 'auto';
+      widget.style.bottom = 'auto';
+      sx = e.clientX; sy = e.clientY; ox = r.left; oy = r.top;
+      try { head.setPointerCapture(e.pointerId); } catch (_) {}
+      e.preventDefault();
+    });
+    head.addEventListener('pointermove', function (e) {
+      if (!dragging) return;
+      let nx = ox + (e.clientX - sx);
+      let ny = oy + (e.clientY - sy);
+      nx = Math.max(0, Math.min(window.innerWidth - widget.offsetWidth, nx));
+      ny = Math.max(0, Math.min(window.innerHeight - widget.offsetHeight, ny));
+      widget.style.left = nx + 'px';
+      widget.style.top = ny + 'px';
+    });
+    function endDrag(e) { dragging = false; try { head.releasePointerCapture(e.pointerId); } catch (_) {} }
+    head.addEventListener('pointerup', endDrag);
+    head.addEventListener('pointercancel', endDrag);
+
+    // 折叠 / 展开
+    toggle.addEventListener('click', function (e) {
+      e.stopPropagation();
+      const c = widget.classList.toggle('collapsed');
+      body.style.display = c ? 'none' : '';
+      toggle.textContent = c ? '+' : '—';
+    });
+
+    // 语音识别（Web Speech API）
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      mic.textContent = '不支持';
+      mic.disabled = true;
+      statusEl.textContent = '当前浏览器不支持语音';
+      return;
+    }
+    let recog = null, listening = false;
+    function setListening(v) {
+      listening = v;
+      mic.classList.toggle('listening', v);
+      mic.textContent = v ? '停止' : '点击说话';
+      statusEl.textContent = v ? '聆听中…说完自动填入' : '拖动标题可移动';
+    }
+    mic.addEventListener('click', function () {
+      if (listening) { if (recog) recog.stop(); return; }
+      recog = new SR();
+      recog.lang = 'zh-CN';
+      recog.interimResults = true;
+      recog.continuous = false;
+      const input = document.getElementById('input');
+      recog.onresult = function (ev) {
+        let txt = '';
+        for (let i = ev.resultIndex; i < ev.results.length; i++) {
+          txt += ev.results[i][0].transcript;
+        }
+        if (input) {
+          const base = input.value && !/[\s\n]$/.test(input.value) ? input.value + ' ' : input.value;
+          input.value = base + txt;
+          input.dispatchEvent(new Event('input'));
+        }
+        statusEl.textContent = '已识别：' + txt.slice(-14);
+      };
+      recog.onerror = function (e) { setListening(false); statusEl.textContent = '出错了：' + (e.error || 'unknown'); };
+      recog.onend = function () { setListening(false); };
+      setListening(true);
+      try { recog.start(); } catch (_) { setListening(false); }
+    });
   }
 
   init();
